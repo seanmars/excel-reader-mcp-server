@@ -1,0 +1,13 @@
+[project]
+name = "excel-reader-mcp-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.0.0",
+    "mcp[cli]>=1.5.0",
+    "pandas>=2.2.3",
+    "dotenv>=0.9.9",
+    "xlrd>=2.0.1",
+]
