@@ -2,8 +2,12 @@
 import os
 import json
 from pathlib import Path
+from typing import Any
+
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
+from pandas import DataFrame
+from pydantic.v1.utils import to_lower_camel
 
 # Create an MCP server
 mcp = FastMCP("excel-reader", dependencies=["pandas", "openpyxl", "xlrd"])
@@ -49,11 +53,76 @@ def get_excel_file_path(filename: str) -> str:
 
 
 @mcp.tool()
-def read_excel(filename: str, sheet_name: str = None) -> str:
+def fetch_sheet_names(filename: str) -> str | list[Any]:
+    try:
+        file_path = get_excel_file_path(filename)
+        if not file_path:
+            raise FileNotFoundError(
+                f"File {filename} not found in resource folders.")
+
+        return pd.ExcelFile(file_path).sheet_names
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def read_game_data(filename) -> str:
+    """Read game data from an Excel file and return it as JSON
+    """
+    try:
+        file_path = get_excel_file_path(filename)
+        print(f"File path: {file_path}")
+        if not file_path:
+            raise FileNotFoundError(
+                f"File {filename} not found in resource folders.")
+
+        sheets = fetch_sheet_names(filename)
+        sheet_name = sheets[0] if isinstance(sheets, list) else sheets
+        print(f"Sheet name: {sheet_name}")
+        # Check if the sheet name is valid
+        if not sheet_name:
+            raise ValueError("Sheet name is empty.")
+
+        # Read the Excel file
+        xl = pd.ExcelFile(file_path)
+
+        # parse first 20 row to get row number which value == 'type' in first column
+        df: DataFrame = xl.parse(sheet_name, header=None, nrows=20)
+        row = df.iloc[:, 0].tolist().index('type')
+        header_row = row - 1
+        type_row = row
+        info_row = row + 1
+        skip_rows = [type_row, info_row]
+        end_col = df.iloc[row, :].tolist().index('###')
+        print(f"header_row: {header_row}, type_row: {type_row}, info_row: {info_row}, end_col: {end_col}")
+        df = xl.parse(sheet_name, header=header_row,
+                      skiprows=lambda x: x in skip_rows,
+                      usecols=list(range(0, end_col)))
+        # remove row if first column is 'ps' case-insensitive
+        df = df[df.iloc[:, 0].str.lower() != 'ps']
+
+        # find first row which value == '###' in first column
+        end_row = df.iloc[:, 0].tolist().index('###')
+        print(f"end_row: {end_row}")
+        df = df.iloc[:end_row - 1, :]
+
+        # print total rows
+        print(f"Total rows: {len(df.index)}")
+
+        # Convert to JSON string, handling NaN/NaT values
+        with open('output.json', 'w', encoding='utf-8') as file:
+            df.to_json(file, orient='records', date_format='iso', force_ascii=False)
+        return df.to_json(orient='records', date_format='iso', force_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def read_excel(filename: str, sheet_name: str | None = None) -> str:
     """Read an Excel file and return its contents as JSON
 
     Args:
-        file_path: Path to the Excel file
+        filename: Path to the Excel file
         sheet_name: Name of the sheet to read (optional, defaults to first sheet)
 
     Returns:
@@ -66,6 +135,13 @@ def read_excel(filename: str, sheet_name: str = None) -> str:
             raise FileNotFoundError(
                 f"File {filename} not found in resource folders.")
 
+        sheets = fetch_sheet_names(filename)
+        if not sheet_name:
+            sheet_name = sheets[0] if isinstance(sheets, list) else sheets
+        # Check if the sheet name is valid
+        if not sheet_name:
+            raise ValueError("Sheet name is empty.")
+
         # Read the Excel file
         df = pd.read_excel(file_path, sheet_name=sheet_name)
         # Convert to JSON string, handling NaN/NaT values
@@ -75,24 +151,24 @@ def read_excel(filename: str, sheet_name: str = None) -> str:
 
 
 @mcp.tool()
-def add(a: int, b: int) -> int:
-    """Add two numbers"""
-    return a + b
-
-# Add a dynamic greeting resource
-
-
-@mcp.resource("greeting://{name}")
-def get_greeting(name: str) -> str:
-    """Get a personalized greeting"""
-    return f"Hello, {name}!"
+def get_excel_file_list():
+    res_folders = get_res_folders()
+    file_list = []
+    for folder in res_folders:
+        print(folder)
+        for file in folder.glob("*.xlsx"):
+            file_list.append(str(file))
+        for file in folder.glob("*.xls"):
+            file_list.append(str(file))
+    return file_list
 
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
 
-    res = get_res_folders()
-    print(res)
-    response = read_excel("PC_2025-03-27.xls", "2025-03-27")
-    print(response)
+    filename = 'ITEM.xlsx'
+    result = read_game_data(filename)
+    # print(result)
+    print('done')
